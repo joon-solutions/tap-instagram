@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
 import os
 import json
+from typing import Iterator
 import singer
-from singer import utils, metadata
+from singer import utils, Transformer, metrics
 from singer.catalog import Catalog, CatalogEntry
 from singer.schema import Schema
+from tap_instagram.streams import User, Stream, UserLifetimeInsights, UserInsights
+from tap_instagram.common import InstagramTapException
+from tap_instagram.api import InstagramAPI
 
 
-REQUIRED_CONFIG_KEYS = ["start_date", "access_token"]
+REQUIRED_CONFIG_KEYS = ["access_token"]
 LOGGER = singer.get_logger()
-
+STREAMS = ["user", "user_lifetime_insights", "user_insights"]
 
 def get_abs_path(path):
     return os.path.join(os.path.dirname(os.path.realpath(__file__)), path)
@@ -26,11 +30,30 @@ def load_schemas():
     return schemas
 
 
+def load_schema_by_stream(stream):
+    path = get_abs_path("schemas/{}.json".format(stream.name))
+    schema = utils.load_json(path)
+    return schema
+
+
+def init_stream(api, catalog_entry, state):
+    name = catalog_entry.stream
+    stream_alias = catalog_entry.stream_alias
+
+    if name == "user":
+        return User(name, api, stream_alias, catalog_entry)
+    if name == "user_lifetime_insights":
+        return UserLifetimeInsights(name, api, stream_alias, catalog_entry)
+    if name =="user_insights":
+        return UserInsights(state, name=name, api=api, stream_alias=stream_alias, catalog_entry=catalog_entry)
+    else:
+        raise InstagramTapException("Stream {} not available".format(name))
+
+
 def discover():
     raw_schemas = load_schemas()
     streams = []
     for stream_id, schema in raw_schemas.items():
-        # TODO: populate any metadata and stream's key properties here..
         stream_metadata = []
         key_properties = []
         streams.append(
@@ -52,52 +75,56 @@ def discover():
     return Catalog(streams)
 
 
-def sync(config, state, catalog):
-    """ Sync data from tap source """
-    # Loop over selected streams in catalog
-    for stream in catalog.get_selected_streams(state):
-        LOGGER.info("Syncing stream:" + stream.tap_stream_id)
+def get_selected_streams(api, catalog, state) -> Iterator[Stream]:
+    for avail_stream in STREAMS:
+        catalog_entry = next((s for s in catalog.streams if s.tap_stream_id == avail_stream), None)
+        if catalog_entry:
+            yield init_stream(api, catalog_entry, state)
+    
 
-        bookmark_column = stream.replication_key
-        is_sorted = True  # TODO: indicate whether data is sorted ascending on bookmark value
+def sync(config, state, catalog: singer.Catalog):
+    """ Sync data from tap source """
+    LOGGER.info("Start to sync")
+    LOGGER.info("State: %s", state)
+    api = InstagramAPI(config["access_token"])
+
+    # Loop over selected streams in catalog
+    for stream in get_selected_streams(api, catalog, state):
+        LOGGER.info("Syncing stream:" + stream.name)
+        schema = load_schema_by_stream(stream)
 
         singer.write_schema(
-            stream_name=stream.tap_stream_id,
-            schema=stream.schema,
+            stream_name=stream.name,
+            schema=schema,
             key_properties=stream.key_properties,
+            bookmark_properties=None,
+            stream_alias=stream.stream_alias
         )
 
-        # TODO: delete and replace this inline function with your own data retrieval process:
-        tap_data = lambda: [{"id": x, "name": "row${x}"} for x in range(1000)]
-
-        max_bookmark = None
-        for row in tap_data():
-            # TODO: place type conversions or transformations here
-
-            # write one or more rows to the stream:
-            singer.write_records(stream.tap_stream_id, [row])
-            if bookmark_column:
-                if is_sorted:
-                    # update bookmark to latest value
-                    singer.write_state({stream.tap_stream_id: row[bookmark_column]})
-                else:
-                    # if data unsorted, save max value until end of writes
-                    max_bookmark = max(max_bookmark, row[bookmark_column])
-        if bookmark_column and not is_sorted:
-            singer.write_state({stream.tap_stream_id: max_bookmark})
+        # max_bookmark = None
+        with Transformer() as transformer:
+            with metrics.record_counter(stream.name) as counter:
+                for message in stream:
+                    # place type conversions or transformations here
+                    if "record" in message:
+                        counter.increment()
+                        time_extracted = utils.now()
+                        record = transformer.transform(message["record"], schema)
+                        singer.write_record(stream.name, record, stream.stream_alias, time_extracted)
+                    elif "state" in message:
+                        singer.write_state(message["state"])
+                    else:
+                        raise InstagramTapException("Message invalid: {}".format(message))
     return
 
 
 @utils.handle_top_exception(LOGGER)
 def main():
-    # Parse command line arguments
     args = utils.parse_args(REQUIRED_CONFIG_KEYS)
 
-    # If discover flag was passed, run discovery mode and dump output to stdout
     if args.discover:
         catalog = discover()
         catalog.dump()
-    # Otherwise run in sync mode
     else:
         if args.catalog:
             catalog = args.catalog
