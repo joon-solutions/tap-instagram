@@ -30,25 +30,43 @@ def retry_pattern(backoff_type, exception, **wait_gen_kwargs):
     def log_retry_attempt(details):
         _, exc, _ = sys.exc_info()
         LOGGER.info(str(exc))
-        LOGGER.info(f"Caught retryable error after {details['tries']} tries. Waiting {details['wait']} more seconds then retrying...")
+        LOGGER.info(
+            "Caught retryable error after %s tries. Waiting %s more seconds then retrying...",
+            details["tries"],
+            details["wait"],
+        )
 
     def should_retry_api_error(exc: FacebookRequestError):
         # Retryable OAuth Error Codes
-        if exc.api_error_type() == "OAuthException" and exc.api_error_code() in (1, 2, 4, 17, 341, 368):
+        if exc.api_error_type() == "OAuthException" and exc.api_error_code() in (
+            1,
+            2,
+            4,
+            17,
+            341,
+            368,
+        ):
             return True
 
         # Rate Limiting Error Codes
         if exc.api_error_code() in (4, 17, 32, 613):
             return True
 
-        if exc.http_status() == status_codes.TOO_MANY_REQUESTS:
+        if exc.http_status() == status_codes.TOO_MANY_REQUESTS:  # pylint: disable=no-member
             return True
 
         # FIXME: add type and http_status
-        if exc.api_error_code() == 10 and exc.api_error_message() == "(#10) Not enough viewers for the media to show insights":
+        if (
+            exc.api_error_code() == 10
+            and exc.api_error_message() == "(#10) Not enough viewers for the media to show insights"
+        ):
             return False  # expected error
 
-        if exc.http_status() == status_codes.BAD_REQUEST and exc.api_error_code() == 100 and exc.api_error_subcode() == 33:
+        if (
+            exc.http_status() == status_codes.BAD_REQUEST  # pylint: disable=no-member
+            and exc.api_error_code() == 100
+            and exc.api_error_subcode() == 33
+        ):
             return True
 
         if exc.api_transient_error():

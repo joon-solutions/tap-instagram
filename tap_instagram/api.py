@@ -25,26 +25,36 @@ class MyFacebookAdsApi(FacebookAdsApi):
     """Custom Facebook API class to intercept all API calls and handle call rate limits"""
 
     call_rate_threshold = 90  # maximum percentage of call limit utilization
-    pause_interval = pendulum.duration(minutes=1)  # default pause interval if reached or close to call rate limit
+    pause_interval = pendulum.duration(
+        minutes=1
+    )  # default pause interval if reached or close to call rate limit
 
     @staticmethod
     def parse_call_rate_header(headers):
         call_count = 0
         pause_interval = pendulum.duration()
 
-        usage_header = headers.get("x-business-use-case-usage") or headers.get("x-app-usage") or headers.get("x-ad-account-usage")
+        usage_header = (
+            headers.get("x-business-use-case-usage")
+            or headers.get("x-app-usage")
+            or headers.get("x-ad-account-usage")
+        )
         if usage_header:
             usage_header = json.loads(usage_header)
             call_count = usage_header.get("call_count") or usage_header.get("acc_id_util_pct") or 0
-            pause_interval = pendulum.duration(minutes=usage_header.get("estimated_time_to_regain_access", 0))
+            pause_interval = pendulum.duration(
+                minutes=usage_header.get("estimated_time_to_regain_access", 0)
+            )
 
         return call_count, pause_interval
 
-    def handle_call_rate_limit(self, response, params):
+    def handle_call_rate_limit(self, response, params):  # pylint: disable=unused-argument
         headers = response.headers()
         call_count, pause_interval = self.parse_call_rate_header(headers)
         if call_count > self.call_rate_threshold or pause_interval:
-            LOGGER.warn(f"Utilization is too high ({call_count})%, pausing for {pause_interval}")
+            LOGGER.warning(
+                "Utilization is too high (%s)%%, pausing for %s", call_count, pause_interval
+            )
             sleep(pause_interval.total_seconds())
 
     @backoff_policy
@@ -85,13 +95,19 @@ class InstagramAPI:
                     instagram_business_accounts.append(
                         {
                             "page_id": account.get_id(),
-                            "instagram_business_account": IGUser(page.get("instagram_business_account").get("id")),
+                            "instagram_business_account": IGUser(
+                                page.get("instagram_business_account").get("id")
+                            ),
                         }
                     )
         except FacebookRequestError as exc:
-            raise InstagramAPIException(f"Error: {exc.api_error_code()}, {exc.api_error_message()}") from exc
+            raise InstagramAPIException(
+                f"Error: {exc.api_error_code()}, {exc.api_error_message()}"
+            ) from exc
 
         if not instagram_business_accounts:
-            raise InstagramAPIException("Couldn't find an Instagram business account for current Access Token")
+            raise InstagramAPIException(
+                "Couldn't find an Instagram business account for current Access Token"
+            )
 
         return instagram_business_accounts

@@ -15,17 +15,18 @@ REQUIRED_CONFIG_KEYS = ["access_token"]
 LOGGER = singer.get_logger()
 STREAMS = ["user", "user_lifetime_insights", "user_insights"]
 
+
 def get_abs_path(path):
     return os.path.join(os.path.dirname(os.path.realpath(__file__)), path)
 
 
 def load_schemas():
-    """ Load schemas from schemas folder """
+    """Load schemas from schemas folder"""
     schemas = {}
-    for filename in os.listdir(get_abs_path('schemas')):
-        path = get_abs_path('schemas') + '/' + filename
-        file_raw = filename.replace('.json', '')
-        with open(path) as file:
+    for filename in os.listdir(get_abs_path("schemas")):
+        path = get_abs_path("schemas") + "/" + filename
+        file_raw = filename.replace(".json", "")
+        with open(path, "r", encoding="utf-8") as file:
             schemas[file_raw] = Schema.from_dict(json.load(file))
     return schemas
 
@@ -44,10 +45,11 @@ def init_stream(api, catalog_entry, state):
         return User(name, api, stream_alias, catalog_entry)
     if name == "user_lifetime_insights":
         return UserLifetimeInsights(name, api, stream_alias, catalog_entry)
-    if name =="user_insights":
-        return UserInsights(state, name=name, api=api, stream_alias=stream_alias, catalog_entry=catalog_entry)
-    else:
-        raise InstagramTapException("Stream {} not available".format(name))
+    if name == "user_insights":
+        return UserInsights(
+            state, name=name, api=api, stream_alias=stream_alias, catalog_entry=catalog_entry
+        )
+    raise InstagramTapException("Stream {} not available".format(name))
 
 
 def discover():
@@ -80,17 +82,17 @@ def get_selected_streams(api, catalog, state) -> Iterator[Stream]:
         catalog_entry = next((s for s in catalog.streams if s.tap_stream_id == avail_stream), None)
         if catalog_entry:
             yield init_stream(api, catalog_entry, state)
-    
+
 
 def sync(config, state, catalog: singer.Catalog):
-    """ Sync data from tap source """
+    """Sync data from tap source"""
     LOGGER.info("Start to sync")
     LOGGER.info("State: %s", state)
     api = InstagramAPI(config["access_token"])
 
     # Loop over selected streams in catalog
     for stream in get_selected_streams(api, catalog, state):
-        LOGGER.info("Syncing stream:" + stream.name)
+        LOGGER.info("Syncing stream:%s", stream.name)
         schema = load_schema_by_stream(stream)
 
         singer.write_schema(
@@ -98,7 +100,7 @@ def sync(config, state, catalog: singer.Catalog):
             schema=schema,
             key_properties=stream.key_properties,
             bookmark_properties=None,
-            stream_alias=stream.stream_alias
+            stream_alias=stream.stream_alias,
         )
 
         # max_bookmark = None
@@ -110,12 +112,13 @@ def sync(config, state, catalog: singer.Catalog):
                         counter.increment()
                         time_extracted = utils.now()
                         record = transformer.transform(message["record"], schema)
-                        singer.write_record(stream.name, record, stream.stream_alias, time_extracted)
+                        singer.write_record(
+                            stream.name, record, stream.stream_alias, time_extracted
+                        )
                     elif "state" in message:
                         singer.write_state(message["state"])
                     else:
                         raise InstagramTapException("Message invalid: {}".format(message))
-    return
 
 
 @utils.handle_top_exception(LOGGER)

@@ -11,8 +11,12 @@ setup(
     py_modules=["tap_instagram"],
     install_requires=[
         # NB: Pin these to a more specific version for tap reliability
-        "singer-python",
-        "requests",
+        "singer-python==5.8.0",
+        "requests==2.20.0",
+        "facebook-business==12.0.0",
+        "backoff==1.8.0",
+        "cached-property==1.5.2",
+        "pendulum==2.1.2"
     ],
     entry_points="""
     [console_scripts]
