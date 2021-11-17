@@ -1,19 +1,30 @@
 #!/usr/bin/env python3
-import os
 import json
+import os
+import sys
 from typing import Iterator
+
 import singer
-from singer import utils, Transformer, metrics
+from singer import Transformer, metrics, utils
+from singer import metadata
 from singer.catalog import Catalog, CatalogEntry
 from singer.schema import Schema
-from tap_instagram.streams import User, Stream, UserLifetimeInsights, UserInsights
-from tap_instagram.common import InstagramTapException
-from tap_instagram.api import InstagramAPI
 
+from tap_instagram.api import InstagramAPI
+from tap_instagram.common import InstagramTapException
+from tap_instagram import streams as insta_streams
 
 REQUIRED_CONFIG_KEYS = ["access_token"]
 LOGGER = singer.get_logger()
-STREAMS = ["user", "user_lifetime_insights", "user_insights"]
+STREAM_CLS = {
+    "users": insta_streams.Users,
+    "user_lifetime_insights": insta_streams.UserLifetimeInsights,
+    "user_insights": insta_streams.UserInsights,
+    "media": insta_streams.Media,
+    "media_insights": insta_streams.MediaInsights,
+    "stories": insta_streams.Stories,
+    "story_insights": insta_streams.StoryInsights,
+}
 
 
 def get_abs_path(path):
@@ -27,7 +38,7 @@ def load_schemas():
         path = get_abs_path("schemas") + "/" + filename
         file_raw = filename.replace(".json", "")
         with open(path, "r", encoding="utf-8") as file:
-            schemas[file_raw] = Schema.from_dict(json.load(file))
+            schemas[file_raw] = json.load(file)
     return schemas
 
 
@@ -37,18 +48,17 @@ def load_schema_by_stream(stream):
     return schema
 
 
-def init_stream(api, catalog_entry, state):
+def init_stream(api, catalog_entry, state) -> insta_streams.Stream:
     name = catalog_entry.stream
     stream_alias = catalog_entry.stream_alias
 
-    if name == "user":
-        return User(name, api, stream_alias, catalog_entry)
-    if name == "user_lifetime_insights":
-        return UserLifetimeInsights(name, api, stream_alias, catalog_entry)
-    if name == "user_insights":
-        return UserInsights(
-            state, name=name, api=api, stream_alias=stream_alias, catalog_entry=catalog_entry
-        )
+    if name in STREAM_CLS:
+        stream_cls = STREAM_CLS[name]
+        if issubclass(stream_cls, insta_streams.IncrementalStream):
+            return stream_cls(
+                state, name=name, api=api, stream_alias=stream_alias, catalog_entry=catalog_entry
+            )
+        return stream_cls(name, api, stream_alias, catalog_entry)
     raise InstagramTapException("Stream {} not available".format(name))
 
 
@@ -56,29 +66,27 @@ def discover():
     raw_schemas = load_schemas()
     streams = []
     for stream_id, schema in raw_schemas.items():
-        stream_metadata = []
-        key_properties = []
+        stream_cls = STREAM_CLS[stream_id]
+        stream_metadata = metadata.to_list(metadata.to_map(metadata.get_standard_metadata(schema)))
+        # Auto select all fields
+        for item in stream_metadata:
+            item["metadata"]["selected"] = True
         streams.append(
-            CatalogEntry(
-                tap_stream_id=stream_id,
-                stream=stream_id,
-                schema=schema,
-                key_properties=key_properties,
-                metadata=stream_metadata,
-                replication_key=None,
-                is_view=None,
-                database=None,
-                table=None,
-                row_count=None,
-                stream_alias=None,
-                replication_method=None,
-            )
+            {
+                "stream": stream_id,
+                "tap_stream_id": stream_id,
+                "stream_alias": stream_id,
+                "schema": schema,
+                "metadata": stream_metadata,
+                "key_properties": stream_cls.key_properties or [],
+                "replication-key": stream_cls.bookmark_key or None,
+            }
         )
-    return Catalog(streams)
+    return {"streams": streams}
 
 
-def get_selected_streams(api, catalog, state) -> Iterator[Stream]:
-    for avail_stream in STREAMS:
+def get_selected_streams(api, catalog, state) -> Iterator[insta_streams.Stream]:
+    for avail_stream in STREAM_CLS:
         catalog_entry = next((s for s in catalog.streams if s.tap_stream_id == avail_stream), None)
         if catalog_entry:
             yield init_stream(api, catalog_entry, state)
@@ -90,20 +98,19 @@ def sync(config, state, catalog: singer.Catalog):
     LOGGER.info("State: %s", state)
     api = InstagramAPI(config["access_token"])
 
-    # Loop over selected streams in catalog
     for stream in get_selected_streams(api, catalog, state):
         LOGGER.info("Syncing stream:%s", stream.name)
         schema = load_schema_by_stream(stream)
+        bookmark_properties = [stream.bookmark_key] if stream.bookmark_key else []
 
         singer.write_schema(
             stream_name=stream.name,
             schema=schema,
             key_properties=stream.key_properties,
-            bookmark_properties=None,
+            bookmark_properties=bookmark_properties,
             stream_alias=stream.stream_alias,
         )
 
-        # max_bookmark = None
         with Transformer() as transformer:
             with metrics.record_counter(stream.name) as counter:
                 for message in stream:
@@ -127,7 +134,7 @@ def main():
 
     if args.discover:
         catalog = discover()
-        catalog.dump()
+        json.dump(catalog, sys.stdout, indent=4)
     else:
         if args.catalog:
             catalog = args.catalog

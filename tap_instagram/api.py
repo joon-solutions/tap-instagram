@@ -15,6 +15,7 @@ from facebook_business.adobjects import user as fb_user
 from facebook_business.adobjects.iguser import IGUser
 from facebook_business.adobjects.page import Page
 from facebook_business.exceptions import FacebookRequestError
+
 from tap_instagram.common import InstagramAPIException, retry_pattern
 
 LOGGER = singer.get_logger()

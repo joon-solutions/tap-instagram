@@ -55,7 +55,6 @@ def retry_pattern(backoff_type, exception, **wait_gen_kwargs):
         if exc.http_status() == status_codes.TOO_MANY_REQUESTS:  # pylint: disable=no-member
             return True
 
-        # FIXME: add type and http_status
         if (
             exc.api_error_code() == 10
             and exc.api_error_message() == "(#10) Not enough viewers for the media to show insights"
@@ -72,7 +71,6 @@ def retry_pattern(backoff_type, exception, **wait_gen_kwargs):
         if exc.api_transient_error():
             return True
 
-        # FIXME: add type, code and http_status
         if exc.api_error_subcode() == 2108006:
             return False
 
@@ -91,8 +89,8 @@ def retry_pattern(backoff_type, exception, **wait_gen_kwargs):
 def remove_params_from_url(url, params):
     parsed_url = urlparse.urlparse(url)
     res_query = []
-    for q in parsed_url.query.split("&"):
-        key, value = q.split("=")
+    for query in parsed_url.query.split("&"):
+        key, value = query.split("=")
         if key not in params:
             res_query.append(f"{key}={value}")
 
